@@ -4,7 +4,7 @@ experiment:
   seed: 42
 
 dataset:
-  name: "iris"      # iris | wine | breast_cancer
+  name: "breast_cancer"      # iris | wine | breast_cancer
   test_size: 0.2
   val_size: 0.2
   scaler: "minmax"
@@ -13,7 +13,7 @@ model:
   input_dim: null        # auto-set at runtime
   hidden_dim_factor: 3   # hidden_dim = input_dim * factor
   latent_dim_factor: 0.5 # latent_dim = floor(input_dim * factor)
-  activation: "relu"
+  activation: "gelu"
   output_activation: "sigmoid"
 
 training:

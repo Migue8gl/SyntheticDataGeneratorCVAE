@@ -112,7 +112,7 @@ def save_learning_curves_plot(losses, eval_losses, epochs, path):
 
 
 def main():
-    cfg = OmegaConf.load("config/train_vae_config.yaml")
+    cfg = OmegaConf.load("config/config.yaml")
     device = torch.device(cfg.experiment.device)
 
     os.makedirs(cfg.paths.model_dir, exist_ok=True)
