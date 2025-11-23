@@ -5,7 +5,7 @@ experiment:
   size_k_folds: 5
 
 dataset:
-  name: "wine"      # iris | wine | breast_cancer
+  name: "breast_cancer"      # iris | wine | breast_cancer
   test_size: 0.2
   val_size: 0.2
   scaler: "minmax"

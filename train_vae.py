@@ -101,7 +101,7 @@ def save_learning_curves_plot(losses, eval_losses, epochs, path):
     plt.figure(figsize=(12, 10))
     sns.set_style("whitegrid")
     for i, (name, title) in enumerate(
-        [("loss", "Loss"), ("mse", "Binary Cross Entropy"), ("kld", "KL Divergence")],
+        [("loss", "Loss"), ("mse", "Mean Squared Error"), ("kld", "KL Divergence")],
         1,
     ):
         plt.subplot(3, 1, i)
