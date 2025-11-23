@@ -10,8 +10,6 @@ from umap import UMAP
 
 from train_vae import CVAE
 
-SYNTHETIC_DATA_SIZE = 600
-
 
 def plot_real_vs_synthetic(
     real_data,
@@ -506,7 +504,7 @@ def main():
     model.eval()
     all_samples = []
     all_labels = []
-    samples_each_class = SYNTHETIC_DATA_SIZE // num_classes
+    samples_each_class = X_train.shape[0] // num_classes
     for class_idx in sorted(set(y_test)):
         class_samples = sample_n(
             model,
@@ -519,6 +517,12 @@ def main():
         all_labels.append(np.full(samples_each_class, class_idx))
     samples = torch.cat(all_samples, dim=0).cpu().numpy()
     synthetic_labels = np.concatenate(all_labels)
+
+    np.save(os.path.join(cfg.paths.data_dir, f"X_synthetic_{dataset_name}"), samples)
+    np.save(
+        os.path.join(cfg.paths.data_dir, f"y_synthetic_{dataset_name}"),
+        synthetic_labels,
+    )
 
     os.makedirs("img", exist_ok=True)
     os.makedirs("results", exist_ok=True)

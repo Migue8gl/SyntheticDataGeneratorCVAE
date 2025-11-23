@@ -2,9 +2,10 @@ experiment:
   name: "cvae_training"
   device: "cuda"   # "cpu" or "cuda"
   seed: 42
+  size_k_folds: 5
 
 dataset:
-  name: "breast_cancer"      # iris | wine | breast_cancer
+  name: "wine"      # iris | wine | breast_cancer
   test_size: 0.2
   val_size: 0.2
   scaler: "minmax"
@@ -13,7 +14,7 @@ model:
   input_dim: null        # auto-set at runtime
   hidden_dim_factor: 3   # hidden_dim = input_dim * factor
   latent_dim_factor: 0.5 # latent_dim = floor(input_dim * factor)
-  activation: "gelu"
+  activation: "relu"
   output_activation: "sigmoid"
 
 training:

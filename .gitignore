@@ -8,3 +8,6 @@ img/
 *.csv
 __pycache__/
 results/
+data/
+img/
+model/
