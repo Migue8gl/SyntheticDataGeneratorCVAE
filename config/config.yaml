@@ -44,7 +44,7 @@ loss:
   beta: 1.0
 
 paths:
-  model_dir: "model"
+  model_dir: "models"
   data_dir: "data"
   image_dir: "img"
   results_dir: "results"
