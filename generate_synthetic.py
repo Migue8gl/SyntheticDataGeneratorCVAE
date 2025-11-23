@@ -9,6 +9,7 @@ from omegaconf import OmegaConf
 from umap import UMAP
 
 from train_vae import CVAE
+from utils import set_all_seeds
 
 
 def plot_real_vs_synthetic(
@@ -249,7 +250,7 @@ def plot_sample_visualization(
         synth_subset = synthetic_data[synth_subset_indices]
         synth_labels_subset = synthetic_labels[synth_subset_indices]
         combined_data = np.vstack([real_subset, synth_subset])
-        reducer = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+        reducer = UMAP(n_components=2, n_neighbors=15, min_dist=0.1)
         embedding = reducer.fit_transform(combined_data)
         real_embedding = embedding[: len(real_subset)]
         synth_embedding = embedding[len(real_subset) :]
@@ -465,7 +466,6 @@ def compute_and_save_statistics(
             },
         )
 
-    # Create DataFrame and save to CSV
     df = pd.DataFrame(stats_data)
     df.to_csv(output_path, index=False)
 
@@ -477,6 +477,8 @@ def compute_and_save_statistics(
 
 def main():
     cfg = OmegaConf.load("config/config.yaml")
+    set_all_seeds(cfg.experiment.seed)
+
     X_test = np.load(
         os.path.join(cfg.paths.data_dir, f"X_test_{cfg.dataset.name}.npy"),
     )
@@ -532,28 +534,40 @@ def main():
         y_train,
         samples,
         synthetic_labels,
-        f"results/statistics_{dataset_name}.csv",
+        os.path.join(
+            cfg.paths.results_dir,
+            f"data_generation_statistics_{dataset_name}.csv",
+        ),
     )
     plot_real_vs_synthetic(
         X_train,
         y_train,
         samples,
         synthetic_labels,
-        "img/synthetic_vs_real_separate.png",
+        os.path.join(
+            cfg.paths.image_dir,
+            f"synthetic_vs_real_separate_{dataset_name}.png",
+        ),
     )
     plot_comparison_overlays(
         X_train,
         y_train,
         samples,
         synthetic_labels,
-        "img/synthetic_vs_real_overlay.png",
+        os.path.join(
+            cfg.paths.image_dir,
+            f"synthetic_vs_real_overlay_{dataset_name}.png",
+        ),
     )
     plot_sample_visualization(
         X_train,
         y_train,
         samples,
         synthetic_labels,
-        "img/synthetic_vs_real_samples.png",
+        os.path.join(
+            cfg.paths.image_dir,
+            f"synthetic_vs_real_samples_{dataset_name}.png",
+        ),
         n_samples=200,
     )
 

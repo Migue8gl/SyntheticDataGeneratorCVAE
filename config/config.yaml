@@ -41,26 +41,18 @@ early_stopping:
 
 loss:
   name: "vae_loss"
-  beta: 2.0
+  beta: 1.0
 
 paths:
   model_dir: "model"
   data_dir: "data"
   image_dir: "img"
+  results_dir: "results"
   model_file: "cvae_{dataset}.pth"
   scaler_file: "scaler_{dataset}.pkl"
   config_file: "config_{dataset}.pkl"
-  learning_curve_plot: "learning_curves.png"
 
 logging:
   print_every: 100
   save_best_only: true
   save_learning_curves: true
-
-plots:
-  metrics:
-    - loss
-    - mse
-    - kld
-  style: "whitegrid"
-  figure_size: [12, 10]

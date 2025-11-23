@@ -15,6 +15,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, TensorDataset
 
+from utils import set_all_seeds
+
 
 def load_dataset(name):
     if name == "iris":
@@ -113,6 +115,7 @@ def save_learning_curves_plot(losses, eval_losses, epochs, path):
 
 def main():
     cfg = OmegaConf.load("config/config.yaml")
+    set_all_seeds(cfg.experiment.seed)
     device = torch.device(cfg.experiment.device)
 
     os.makedirs(cfg.paths.model_dir, exist_ok=True)
@@ -288,7 +291,7 @@ def main():
         losses,
         eval_losses,
         epochs,
-        os.path.join(cfg.paths.image_dir, cfg.paths.learning_curve_plot),
+        os.path.join(cfg.paths.image_dir, f"learning_curves_{cfg.dataset.name}.png"),
     )
 
     print(
