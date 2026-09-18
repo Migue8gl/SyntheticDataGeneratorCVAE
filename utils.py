@@ -1,19 +1,6 @@
-import os
-import random
-
-import numpy as np
-import torch
+from sklearn.datasets import load_iris
 
 
-def set_all_seeds(seed):
-    random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
-
-    np.random.seed(seed)
-
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+def load_dataset(name: str):
+    if name == "iris":
+        return load_iris(return_X_y=True)

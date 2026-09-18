@@ -1,304 +1,204 @@
 import os
-import pickle
-from typing import Dict, List
+from datetime import UTC, datetime
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import seaborn as sns
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from omegaconf import OmegaConf
-from sklearn.datasets import load_breast_cancer, load_iris, load_wine
+from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
+from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from utils import set_all_seeds
+from config import (
+    BATCH_SIZE,
+    CVAE_CONFIG,
+    DATA_PATH,
+    DATASET_NAME,
+    DEVICE,
+    IMAGES_PATH,
+    MODELS_PATH,
+    NUM_EPOCHS,
+    RANDOM_STATE,
+)
+from models import CVAE
+from utils import load_dataset
 
 
-def load_dataset(name):
-    if name == "iris":
-        d = load_iris()
-    elif name == "wine":
-        d = load_wine()
-    elif name == "breast_cancer":
-        d = load_breast_cancer()
-    else:
-        raise ValueError(name)
-    return d.data, d.target, len(set(d.target)), d.feature_names
+def plot_losses(
+    losses: list[float],
+    recon_losses: list[float],
+    kl_losses: list[float],
+    img_name: str,
+):
+    epochs = range(1, len(losses) + 1)
 
+    sns.lineplot(x=epochs, y=losses, label="Loss")
+    sns.lineplot(x=epochs, y=recon_losses, label="Reconstruction")
+    sns.lineplot(x=epochs, y=kl_losses, label="KL")
 
-class CVAE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, latent_dim, num_classes):
-        super().__init__()
-        conditional_dim = input_dim + num_classes
-        self.enc1 = nn.Linear(conditional_dim, hidden_dim)
-        self.enc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.mu = nn.Linear(hidden_dim, latent_dim)
-        self.logvar = nn.Linear(hidden_dim, latent_dim)
-        self.dec1 = nn.Linear(latent_dim + num_classes, hidden_dim)
-        self.dec2 = nn.Linear(hidden_dim, hidden_dim)
-        self.dec_out = nn.Linear(hidden_dim, input_dim)
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("CVAE Losses")
+    plt.grid()
 
-    def encode(self, x, y):
-        h = self.relu(self.enc1(torch.cat([x, y], 1)))
-        h = self.relu(self.enc2(h))
-        return self.mu(h), self.logvar(h)
-
-    def reparam(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        return mu + torch.randn_like(std) * std
-
-    def decode(self, z, y):
-        h = self.relu(self.dec1(torch.cat([z, y], 1)))
-        h = self.relu(self.dec2(h))
-        return self.sigmoid(self.dec_out(h))
-
-    def forward(self, x, y):
-        mu, logvar = self.encode(x, y)
-        z = self.reparam(mu, logvar)
-        return self.decode(z, y), mu, logvar
-
-
-def loss_fn(recon, x, mu, logvar, beta):
-    mse = nn.functional.mse_loss(recon, x, reduction="sum")
-    kld = -0.5 * torch.mean(1 + logvar - mu**2 - torch.exp(logvar))
-    return mse + beta * kld, mse, kld
-
-
-def evaluate(model, dataloader, device, beta):
-    model.eval()
-    tot_l = tot_m = tot_k = 0
-    with torch.inference_mode():
-        for xb, yb in dataloader:
-            xb, yb = xb.to(device), yb.to(device)
-            recon, mu, logvar = model(xb, yb)
-            loss, mse, kl = loss_fn(recon, xb, mu, logvar, beta)
-            tot_l += loss.item() * xb.size(0)
-            tot_m += mse.item() * xb.size(0)
-            tot_k += kl.item() * xb.size(0)
-    n = len(dataloader.dataset)
-    return tot_l / n, tot_m / n, tot_k / n
-
-
-def save_learning_curves_plot(losses, eval_losses, epochs, path):
-    df = pd.DataFrame(
-        {
-            "epoch": epochs,
-            "train_loss": losses["loss"],
-            "val_loss": eval_losses["loss"],
-            "train_mse": losses["mse"],
-            "val_mse": eval_losses["mse"],
-            "train_kld": losses["kld"],
-            "val_kld": eval_losses["kld"],
-        },
-    )
-    df_long = df.melt(id_vars="epoch", var_name="metric", value_name="value")
-    plt.figure(figsize=(12, 10))
-    sns.set_style("whitegrid")
-    for i, (name, title) in enumerate(
-        [("loss", "Loss"), ("mse", "Mean Squared Error"), ("kld", "KL Divergence")],
-        1,
-    ):
-        plt.subplot(3, 1, i)
-        subset = df_long[df_long["metric"].isin([f"train_{name}", f"val_{name}"])]
-        sns.lineplot(data=subset, x="epoch", y="value", hue="metric")
-        plt.title(title)
-    plt.tight_layout()
-    plt.savefig(path, dpi=300)
+    os.makedirs(IMAGES_PATH, exist_ok=True)
+    plt.savefig(os.path.join(IMAGES_PATH, img_name))
     plt.close()
 
 
-def main():
-    cfg = OmegaConf.load("config/config.yaml")
-    set_all_seeds(cfg.experiment.seed)
-    device = torch.device(cfg.experiment.device)
+def plot_sample(sample: np.ndarray, labels: np.ndarray, img_name: str):
+    pca = PCA(n_components=2)
+    sample_2d = pca.fit_transform(sample)
 
-    os.makedirs(cfg.paths.model_dir, exist_ok=True)
-    os.makedirs(cfg.paths.data_dir, exist_ok=True)
-    os.makedirs(cfg.paths.image_dir, exist_ok=True)
-
-    X, y, num_classes, feature_names = load_dataset(cfg.dataset.name)
-    input_dim = X.shape[1]
-    hidden_dim = int(input_dim * cfg.model.hidden_dim_factor)
-    latent_dim = int(input_dim * cfg.model.latent_dim_factor)
-
-    print(f"Training CVAE on {cfg.dataset.name} dataset")
-    print(f"Input dim: {input_dim}, Classes: {num_classes}")
-
-    X_train_val, X_test, y_train_val, y_test = train_test_split(
-        X,
-        y,
-        test_size=cfg.dataset.test_size,
-        stratify=y,
-        random_state=cfg.experiment.seed,
-    )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_train_val,
-        y_train_val,
-        test_size=cfg.dataset.val_size,
-        stratify=y_train_val,
-        random_state=cfg.experiment.seed,
+    sns.scatterplot(
+        x=sample_2d[:, 0],
+        y=sample_2d[:, 1],
+        hue=labels,
+        palette="tab10",
     )
 
-    print(
-        f"Train samples: {len(X_train)}, Val samples: {len(X_val)}, Test samples: {len(X_test)}",
-    )
+    plt.xlabel("PCA1")
+    plt.ylabel("PCA2")
+    plt.title(f"{DATASET_NAME} sample")
+    plt.grid()
 
-    scaler = MinMaxScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_val_scaled = scaler.transform(X_val)
-    X_test_scaled = scaler.transform(X_test)
+    os.makedirs(IMAGES_PATH, exist_ok=True)
+    plt.savefig(os.path.join(IMAGES_PATH, img_name))
+    plt.close()
 
-    with open(
-        os.path.join(
-            cfg.paths.model_dir,
-            cfg.paths.scaler_file.format(dataset=cfg.dataset.name),
-        ),
-        "wb",
-    ) as f:
-        pickle.dump(scaler, f)
 
-    np.save(
-        os.path.join(cfg.paths.data_dir, f"X_test_{cfg.dataset.name}.npy"),
-        X_test_scaled,
-    )
-    np.save(os.path.join(cfg.paths.data_dir, f"y_test_{cfg.dataset.name}.npy"), y_test)
-    np.save(
-        os.path.join(cfg.paths.data_dir, f"X_train_{cfg.dataset.name}.npy"),
-        X_train_scaled,
-    )
-    np.save(
-        os.path.join(cfg.paths.data_dir, f"y_train_{cfg.dataset.name}.npy"),
-        y_train,
-    )
+def train_one_epoch(
+    epoch_index: int,
+    train_loader: torch.utils.data.DataLoader,
+    device: str,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    num_classes: int,
+):
+    total_loss = 0.0
+    total_kl = 0.0
+    total_recon = 0.0
 
-    with open(
-        os.path.join(
-            cfg.paths.model_dir,
-            cfg.paths.config_file.format(dataset=cfg.dataset.name),
-        ),
-        "wb",
-    ) as f:
-        pickle.dump(
-            {
-                "input_dim": input_dim,
-                "num_classes": num_classes,
-                "feature_names": feature_names,
-            },
-            f,
+    model.train()
+
+    for x, y in train_loader:
+        x = x.to(device)
+
+        y = (
+            torch.nn.functional.one_hot(
+                y,
+                num_classes=num_classes,
+            )
+            .float()
+            .to(device)
         )
 
-    y_train_oh = torch.eye(num_classes)[y_train].float()
-    y_val_oh = torch.eye(num_classes)[y_val].float()
-    X_train_t = torch.tensor(X_train_scaled, dtype=torch.float32)
-    X_val_t = torch.tensor(X_val_scaled, dtype=torch.float32)
+        x_hat, mu, logvar = model(x, y)
 
-    train_dl = DataLoader(
-        TensorDataset(X_train_t, y_train_oh),
-        batch_size=cfg.training.batch_size,
-        shuffle=False,
-    )
-    val_dl = DataLoader(
-        TensorDataset(X_val_t, y_val_oh),
-        batch_size=cfg.training.batch_size,
-        shuffle=False,
-    )
+        reconstruction_loss = nn.functional.mse_loss(
+            x_hat,
+            x,
+        )
 
-    model = CVAE(input_dim, hidden_dim, latent_dim, num_classes).to(device)
-    opt = optim.Adam(model.parameters(), lr=cfg.optimizer.lr)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        opt,
-        mode=cfg.lr_scheduler.mode,
-        factor=cfg.lr_scheduler.factor,
-        patience=cfg.lr_scheduler.patience,
-    )
+        kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
 
-    best = float("inf")
-    patience = 0
+        loss = reconstruction_loss + kl_loss
 
-    losses: Dict[str, List[float]] = {"loss": [], "mse": [], "kld": []}
-    eval_losses: Dict[str, List[float]] = {"loss": [], "mse": [], "kld": []}
-    epochs = []
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-    for epoch in range(1, cfg.training.epochs + 1):
-        model.train()
-        tl = tm = tk = 0
-        for xb, yb in train_dl:
-            xb, yb = xb.to(device), yb.to(device)
-            opt.zero_grad()
-            recon, mu, logvar = model(xb, yb)
-            loss, mse, kld = loss_fn(recon, xb, mu, logvar, cfg.loss.beta)
-            loss.backward()
-            nn.utils.clip_grad_norm_(
-                model.parameters(),
-                cfg.training.gradient_clip_norm,
-            )
-            opt.step()
-            tl += loss.item() * xb.size(0)
-            tm += mse.item() * xb.size(0)
-            tk += kld.item() * xb.size(0)
+        total_loss += loss.item()
+        total_kl += kl_loss.item()
+        total_recon += reconstruction_loss.item()
 
-        n = len(train_dl.dataset)
-        losses["loss"].append(tl / n)
-        losses["mse"].append(tm / n)
-        losses["kld"].append(tk / n)
+    avg_loss = total_loss / len(train_loader)
+    avg_kl = total_kl / len(train_loader)
+    avg_recon = total_recon / len(train_loader)
 
-        vl, vm, vk = evaluate(model, val_dl, device, cfg.loss.beta)
-        eval_losses["loss"].append(vl)
-        eval_losses["mse"].append(vm)
-        eval_losses["kld"].append(vk)
-        epochs.append(epoch)
+    if epoch_index % 10 == 0:
+        print(
+            f"Epoch {epoch_index + 1}: "
+            f"loss={avg_loss:.4f}, "
+            f"recon={avg_recon:.4f}, "
+            f"kl={avg_kl:.4f}",
+        )
 
-        scheduler.step(vl)
+    return avg_loss, avg_recon, avg_kl
 
-        if epoch % cfg.logging.print_every == 0:
-            print(
-                f"Epoch {epoch:4d} - Train Loss: {tl / n:.4f} | Train MSE: {tm / n:.4f} | Train KLD: {tk / n:.4f} | "
-                f"Val Loss: {vl:.4f} | Val MSE: {vm:.4f} | Val KLD: {vk:.4f}",
-            )
 
-        if vl < best:
-            best = vl
-            patience = 0
-            torch.save(
-                model.state_dict(),
-                os.path.join(
-                    cfg.paths.model_dir,
-                    cfg.paths.model_file.format(dataset=cfg.dataset.name),
-                ),
-            )
-        else:
-            patience += 1
-            if cfg.early_stopping.enabled and patience >= cfg.early_stopping.patience:
-                print(f"Early stopping at epoch {epoch}")
-                break
+def main():
+    X, y = load_dataset(DATASET_NAME)
+    num_classes = len(set(y))
 
-    model.load_state_dict(
-        torch.load(
-            os.path.join(
-                cfg.paths.model_dir,
-                cfg.paths.model_file.format(dataset=cfg.dataset.name),
-            ),
-        ),
+    CVAE_CONFIG["input_dim"] = X.shape[1]
+    CVAE_CONFIG["num_classes"] = num_classes
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        stratify=y,
+        random_state=RANDOM_STATE,
     )
 
-    save_learning_curves_plot(
-        losses,
-        eval_losses,
-        epochs,
-        os.path.join(cfg.paths.image_dir, f"learning_curves_{cfg.dataset.name}.png"),
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.long)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
+    y_test = torch.tensor(y_test, dtype=torch.long)
+
+    os.makedirs(DATA_PATH, exist_ok=True)
+
+    train_dataset = TensorDataset(X_train, y_train)
+    test_dataset = TensorDataset(X_test, y_test)
+
+    torch.save(train_dataset, f"{DATA_PATH}/{DATASET_NAME}_train.pt")
+    torch.save(test_dataset, f"{DATA_PATH}/{DATASET_NAME}_test.pt")
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
     )
 
-    print(
-        f"CVAE saved to "
-        f"{os.path.join(cfg.paths.model_dir, cfg.paths.model_file.format(dataset=cfg.dataset.name))} "
-        f"(Best val loss: {best:.4f})",
+    print(f"Using: {DEVICE}")
+
+    model = CVAE(**CVAE_CONFIG).to(DEVICE)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    train_losses = []
+
+    recon_losses = []
+    kl_losses = []
+
+    for epoch in range(NUM_EPOCHS):
+        loss, recon, kl = train_one_epoch(
+            epoch,
+            train_loader,
+            DEVICE,
+            model,
+            optimizer,
+            num_classes=num_classes,
+        )
+
+        train_losses.append(loss)
+        recon_losses.append(recon)
+        kl_losses.append(kl)
+
+    plot_losses(train_losses, recon_losses, kl_losses, "cvae_losses.png")
+
+    plot_sample(
+        X_train,
+        y_train,
+        f"{DATASET_NAME}_sample.png",
     )
+
+    os.makedirs(MODELS_PATH, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    model_name = f"cvae_{DATASET_NAME}_{timestamp}.pth"
+    torch.save(model.state_dict(), os.path.join(MODELS_PATH, model_name))
 
 
 if __name__ == "__main__":
